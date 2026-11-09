@@ -234,7 +234,7 @@ export default function ProjectPage() {
       </div>
 
       {/* AI analysis */}
-      {project.analysis?.why_chatgpt_cannot_answer && (
+      {!!project.analysis?.why_chatgpt_cannot_answer && (
         <div className="border border-blue-100 bg-blue-50/50 rounded-xl p-5 mb-6">
           <p className="text-xs font-semibold text-blue-700 mb-1">Why this needs real people</p>
           <p className="text-sm text-blue-600">{project.analysis.why_chatgpt_cannot_answer as string}</p>
