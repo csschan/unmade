@@ -44,10 +44,14 @@ Rules:
 
 
 async def decompose(question: str, domains: list[str], budget: float, contributors_needed: int) -> dict:
+    if settings.use_mock:
+        from app.services.mock_data import TASK_DECOMPOSITION
+        return TASK_DECOMPOSITION
+
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     message = await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         system=SYSTEM_PROMPT,
         messages=[
@@ -64,6 +68,5 @@ async def decompose(question: str, domains: list[str], budget: float, contributo
     )
 
     text = message.content[0].text
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(text)
+    from app.services._utils import parse_claude_json
+    return parse_claude_json(text)

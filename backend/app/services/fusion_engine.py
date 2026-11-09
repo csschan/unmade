@@ -64,6 +64,22 @@ Rules:
 
 
 async def fuse(question: str, submissions: list[dict]) -> dict:
+    if settings.use_mock:
+        from app.services.mock_data import FUSION_RESULT
+        # Replace placeholder submission IDs with real ones
+        result = FUSION_RESULT.copy()
+        real_ids = [s["id"] for s in submissions]
+        id_map = {}
+        for i, placeholder in enumerate(["sub_courier", "sub_driver", "sub_resident"]):
+            if i < len(real_ids):
+                id_map[placeholder] = real_ids[i]
+        # Update submission references in findings
+        import json as _json
+        result_str = _json.dumps(result)
+        for old_id, new_id in id_map.items():
+            result_str = result_str.replace(old_id, new_id)
+        return _json.loads(result_str)
+
     submissions_text = "\n\n".join(
         f"[{s['id']}] Contributor type: {s.get('contributor_type', 'unknown')}\n"
         f"Task: {s.get('task_description', 'N/A')}\n"
@@ -74,7 +90,7 @@ async def fuse(question: str, submissions: list[dict]) -> dict:
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     message = await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         system=SYSTEM_PROMPT,
         messages=[
@@ -88,6 +104,5 @@ async def fuse(question: str, submissions: list[dict]) -> dict:
     )
 
     text = message.content[0].text
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(text)
+    from app.services._utils import parse_claude_json
+    return parse_claude_json(text)

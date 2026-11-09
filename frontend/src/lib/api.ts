@@ -12,6 +12,31 @@ async function request(path: string, options?: RequestInit) {
   return res.json();
 }
 
+// --- Agents (Autonomous AI agents) ---
+
+export async function deployAgent(agentName: string, mission: string, budgetUsd: number) {
+  return request("/agents", {
+    method: "POST",
+    body: JSON.stringify({ agent_name: agentName, mission, budget_usd: budgetUsd }),
+  });
+}
+
+export async function activateAgent(agentId: string) {
+  return request(`/agents/${agentId}/activate`, { method: "POST" });
+}
+
+export async function getAgent(agentId: string) {
+  return request(`/agents/${agentId}`);
+}
+
+export async function agentThink(agentId: string) {
+  return request(`/agents/${agentId}/think`, { method: "POST" });
+}
+
+export async function listTransactions() {
+  return request("/agents/transactions/all");
+}
+
 // --- Discover (Business) ---
 
 export async function createProject(
@@ -45,6 +70,10 @@ export async function triggerFusion(projectId: string) {
   return request(`/projects/${projectId}/fuse`, { method: "POST" });
 }
 
+export async function createPurchaseOrder(projectId: string) {
+  return request(`/projects/${projectId}/purchase/order`, { method: "POST" });
+}
+
 export async function purchaseProduct(projectId: string) {
   return request(`/projects/${projectId}/purchase`, { method: "POST" });
 }
@@ -57,6 +86,13 @@ export async function listTasks(status = "open") {
 
 export async function getTask(taskId: string) {
   return request(`/tasks/${taskId}`);
+}
+
+export async function preValidateObservation(taskId: string, content: string) {
+  return request(`/tasks/${taskId}/pre-validate`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
 }
 
 export async function submitObservation(
@@ -73,6 +109,41 @@ export async function submitObservation(
 
 export async function mySubmissions(userId: string) {
   return request(`/tasks/me/submissions?user_id=${userId}`);
+}
+
+// --- Admin ---
+
+export async function adminSeedAgents() {
+  return request("/admin/seed", { method: "POST" });
+}
+
+export async function adminListAgents() {
+  return request("/admin/agents");
+}
+
+export async function adminDeleteAgent(id: string) {
+  return request(`/admin/agents/${id}`, { method: "DELETE" });
+}
+
+export async function adminCreateAgent(data: {
+  id?: string;
+  agent_name: string;
+  mission: string;
+  budget_usd: number;
+  analysis?: Record<string, unknown>;
+  tasks: Array<{
+    description: string;
+    target_contributor: string;
+    location_hint: string;
+    validation_criteria: string;
+    reward_usd: number;
+    max_submissions: number;
+  }>;
+}) {
+  return request("/admin/agents", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }
 
 // --- Auth ---

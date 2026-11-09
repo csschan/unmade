@@ -8,6 +8,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     jwt_secret: str = "dev-secret-change-in-production"
     database_url: str = "sqlite+aiosqlite:///./unmade.db"
+    use_mock: bool = False          # mock AI (Claude) calls
+    use_mock_paypal: bool = False   # mock PayPal — set False to hit real sandbox
+
+    @property
+    def mock_paypal(self) -> bool:
+        """True if PayPal should be mocked. Respects use_mock_paypal override."""
+        return self.use_mock_paypal
 
     model_config = {"env_file": ".env"}
 

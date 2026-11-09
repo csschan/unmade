@@ -38,10 +38,14 @@ Rules:
 
 
 async def analyze_demand(question: str, budget: float) -> dict:
+    if settings.use_mock:
+        from app.services.mock_data import DEMAND_ANALYSIS
+        return DEMAND_ANALYSIS
+
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     message = await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         system=SYSTEM_PROMPT,
         messages=[
@@ -54,6 +58,5 @@ async def analyze_demand(question: str, budget: float) -> dict:
 
     text = message.content[0].text
     # Strip markdown fences if present
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    return json.loads(text)
+    from app.services._utils import parse_claude_json
+    return parse_claude_json(text)

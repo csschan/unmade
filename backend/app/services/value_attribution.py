@@ -56,6 +56,22 @@ async def compute_attribution(
     contributors: dict[str, list[dict]],
     total_budget: float,
 ) -> dict:
+    if settings.use_mock:
+        from app.services.mock_data import ATTRIBUTION_RESULT
+        # Scale payouts to actual budget
+        result = json.loads(json.dumps(ATTRIBUTION_RESULT))
+        platform_fee = total_budget * 0.20
+        distributable = total_budget - platform_fee
+        for attr in result["attributions"]:
+            attr["payout_usd"] = round(attr["marginal_contribution"] * distributable, 2)
+            # Map real submission IDs from contributors
+            cid = attr["contributor_id"]
+            if cid in contributors:
+                attr["submission_ids"] = [s["id"] for s in contributors[cid]]
+        result["platform_fee"] = platform_fee
+        result["total_budget"] = total_budget
+        return result
+
     platform_fee = total_budget * 0.20
     distributable = total_budget - platform_fee
 
@@ -69,7 +85,7 @@ async def compute_attribution(
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     message = await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         system=SYSTEM_PROMPT,
         messages=[
@@ -86,9 +102,10 @@ async def compute_attribution(
     )
 
     text = message.content[0].text
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    result = json.loads(text)
+    from app.services._utils import normalize_attributions, parse_claude_json
+    result = parse_claude_json(text)
+    # Normalize so payouts always sum exactly to distributable
+    result["attributions"] = normalize_attributions(result["attributions"], distributable)
     result["platform_fee"] = platform_fee
     result["total_budget"] = total_budget
     return result

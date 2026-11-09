@@ -132,3 +132,5 @@ class Attribution(Base):
         Enum("pending", "sent", "completed", "failed", name="attribution_status"),
         default="pending",
     )
+
+    product = relationship("Product", back_populates="attributions")

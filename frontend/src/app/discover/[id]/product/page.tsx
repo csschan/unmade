@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { getProduct, purchaseProduct } from "@/lib/api";
+import { createPurchaseOrder, getProduct, purchaseProduct } from "@/lib/api";
 
 interface Finding {
   claim: string;
@@ -27,49 +27,83 @@ interface ProductData {
   summary: string;
   findings: Finding[];
   fusion_metadata: {
-    correlations: Array<{
-      between: string[];
-      relationship: string;
-      strength: string;
-    }>;
-    data_quality: {
-      total_sources: number;
-      novel_findings_count: number;
-      overall_confidence: number;
-    };
+    correlations: Array<{ between: string[]; relationship: string; strength: string }>;
+    data_quality: { total_sources: number; novel_findings_count: number; overall_confidence: number };
     limitations: string[];
   };
   attributions: Attribution[];
+}
+
+const CONTRIBUTOR_INFO: Record<string, { name: string; icon: string }> = {
+  "demo-contributor-001": { name: "Alex Chen", icon: "🛵" },
+  "demo-contributor-002": { name: "Sam Rodriguez", icon: "🚕" },
+  "demo-contributor-003": { name: "Jordan Patel", icon: "🏠" },
+};
+
+const STRENGTH_STYLE: Record<string, string> = {
+  strong: "bg-emerald-50 text-emerald-700 border-emerald-100",
+  moderate: "bg-amber-50 text-amber-700 border-amber-100",
+  weak: "bg-gray-50 text-gray-500 border-gray-100",
+};
+
+function PayPalBuyButton({ orderId, onApproved }: { orderId: string; onApproved: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const rendered = useRef(false);
+  useEffect(() => {
+    if (rendered.current || !ref.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const paypal = (window as any).paypal;
+    if (!paypal) return;
+    rendered.current = true;
+    paypal.Buttons({
+      style: { layout: "vertical", color: "gold", shape: "rect", label: "buynow" },
+      createOrder: () => orderId,
+      onApprove: () => onApproved(),
+      onError: (err: unknown) => { console.error(err); alert("Payment failed."); },
+    }).render(ref.current);
+  }, [orderId, onApproved]);
+  return <div ref={ref} />;
 }
 
 export default function ProductPage() {
   const { id } = useParams<{ id: string }>();
   const [product, setProduct] = useState<ProductData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [purchasing, setPurchasing] = useState(false);
+  const [purchaseOrderId, setPurchaseOrderId] = useState<string | null>(null);
+  const [preparingOrder, setPreparingOrder] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const [purchased, setPurchased] = useState(false);
 
   useEffect(() => {
-    getProduct(id)
-      .then(setProduct)
-      .finally(() => setLoading(false));
+    getProduct(id).then(setProduct).finally(() => setLoading(false));
   }, [id]);
 
-  async function handlePurchase() {
-    setPurchasing(true);
+  async function handleShowPayPal() {
+    setPreparingOrder(true);
+    try {
+      const res = await createPurchaseOrder(id);
+      setPurchaseOrderId(res.order_id);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to create order");
+    }
+    setPreparingOrder(false);
+  }
+
+  async function handlePaymentApproved() {
+    setCompleting(true);
     try {
       await purchaseProduct(id);
       setPurchased(true);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Purchase failed");
     }
-    setPurchasing(false);
+    setCompleting(false);
   }
 
   if (loading) {
     return (
       <main className="flex-1 flex items-center justify-center">
-        <p className="text-gray-400">Loading product...</p>
+        <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin" />
       </main>
     );
   }
@@ -77,172 +111,239 @@ export default function ProductPage() {
   if (!product) {
     return (
       <main className="flex-1 flex items-center justify-center">
-        <p className="text-red-500">Product not found</p>
+        <p className="text-sm text-red-500">Product not found</p>
       </main>
     );
   }
 
-  return (
-    <main className="flex-1 px-6 py-16 max-w-3xl mx-auto w-full">
-      <h1 className="text-2xl font-bold mb-2">{product.title}</h1>
-      <p className="text-gray-600 mb-6">{product.summary}</p>
+  const totalPayout = product.attributions.reduce((s, a) => s + a.payout_usd, 0);
+  const platformFee = totalPayout > 0 ? Math.round(totalPayout / 4) : 20;
+  const totalPrice = totalPayout + platformFee;
 
-      {/* Data quality badge */}
+  return (
+    <main className="max-w-3xl mx-auto px-6 py-12">
+
+      {/* Header */}
+      <div className="mb-8">
+        <span className="inline-block text-xs font-semibold text-violet-600 uppercase tracking-widest mb-3">
+          Intelligence Product
+        </span>
+        <h1 className="text-2xl font-bold text-gray-900 mb-3">{product.title}</h1>
+        <p className="text-sm text-gray-500 leading-relaxed">{product.summary}</p>
+      </div>
+
+      {/* Quality badges */}
       {product.fusion_metadata?.data_quality && (
-        <div className="flex gap-4 mb-8 text-sm">
-          <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
-            {product.fusion_metadata.data_quality.total_sources} sources
-          </span>
-          <span className="bg-purple-50 text-purple-700 px-3 py-1 rounded-full">
-            {product.fusion_metadata.data_quality.novel_findings_count} novel
-            findings
-          </span>
-          <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full">
-            {Math.round(
-              product.fusion_metadata.data_quality.overall_confidence * 100
-            )}
-            % confidence
-          </span>
+        <div className="flex gap-2 flex-wrap mb-8">
+          <Badge label={`${product.fusion_metadata.data_quality.total_sources} independent sources`} color="blue" />
+          <Badge label={`${product.fusion_metadata.data_quality.novel_findings_count} novel findings`} color="violet" />
+          <Badge label={`${Math.round(product.fusion_metadata.data_quality.overall_confidence * 100)}% confidence`} color="emerald" />
         </div>
       )}
 
       {/* Findings */}
-      <h2 className="text-lg font-semibold mb-3">Findings</h2>
-      <div className="space-y-4 mb-8">
-        {product.findings.map((f, i) => (
-          <div
-            key={i}
-            className={`border rounded-xl p-4 ${
-              f.novel
-                ? "border-purple-200 bg-purple-50/50"
-                : "border-gray-200"
-            }`}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <p className="font-medium text-sm">{f.claim}</p>
-              <div className="flex gap-2 shrink-0">
-                {f.novel && (
-                  <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">
-                    Novel
-                  </span>
-                )}
-                {f.cross_validated && (
-                  <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-xs">
-                    Validated
-                  </span>
-                )}
+      <section className="mb-10">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Findings</p>
+        <div className="space-y-3">
+          {product.findings.map((f, i) => (
+            <div
+              key={i}
+              className={`rounded-xl p-5 border-l-4 border ${
+                f.novel
+                  ? "border-l-violet-400 border-violet-100 bg-violet-50/30"
+                  : "border-l-gray-200 border-gray-100 bg-gray-50/40"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <p className="text-sm font-medium text-gray-900 leading-snug">{f.claim}</p>
+                <div className="flex gap-1.5 shrink-0">
+                  {f.novel && (
+                    <span className="text-xs bg-violet-100 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full font-semibold">
+                      Novel
+                    </span>
+                  )}
+                  {f.cross_validated && (
+                    <span className="text-xs bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">
+                      Validated
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-            {/* Confidence bar */}
-            <div className="mt-3 flex items-center gap-2">
-              <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-500 rounded-full"
-                  style={{ width: `${f.confidence * 100}%` }}
-                />
+
+              {/* Confidence */}
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xs text-gray-400 w-16 shrink-0">Confidence</span>
+                <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      f.confidence > 0.7 ? "bg-emerald-500" : f.confidence > 0.5 ? "bg-amber-500" : "bg-red-400"
+                    }`}
+                    style={{ width: `${f.confidence * 100}%` }}
+                  />
+                </div>
+                <span className="text-xs font-semibold text-gray-600 w-8 text-right">
+                  {Math.round(f.confidence * 100)}%
+                </span>
               </div>
-              <span className="text-xs text-gray-400">
-                {Math.round(f.confidence * 100)}%
-              </span>
+
+              <details className="text-xs text-gray-400">
+                <summary className="cursor-pointer hover:text-gray-700 transition-colors font-medium">
+                  How was this derived?
+                </summary>
+                <p className="mt-2 leading-relaxed text-gray-500">{f.reasoning}</p>
+              </details>
             </div>
-            <p className="text-xs text-gray-400 mt-2">{f.reasoning}</p>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </section>
 
       {/* Correlations */}
       {product.fusion_metadata?.correlations?.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold mb-3">
-            Correlations Discovered
-          </h2>
-          <div className="space-y-2">
+        <section className="mb-10">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Correlations Discovered by AI</p>
+          <div className="space-y-3">
             {product.fusion_metadata.correlations.map((c, i) => (
-              <div
-                key={i}
-                className="border border-gray-200 rounded-xl p-3 text-sm"
-              >
-                <p className="text-gray-700">{c.relationship}</p>
-                <span
-                  className={`text-xs mt-1 inline-block px-2 py-0.5 rounded ${
-                    c.strength === "strong"
-                      ? "bg-emerald-100 text-emerald-700"
-                      : c.strength === "moderate"
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-gray-100 text-gray-500"
-                  }`}
-                >
-                  {c.strength}
+              <div key={i} className="border border-violet-100 bg-violet-50/30 rounded-xl p-4">
+                <p className="text-sm text-gray-700 leading-relaxed mb-2">{c.relationship}</p>
+                <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${
+                  STRENGTH_STYLE[c.strength] ?? STRENGTH_STYLE.weak
+                }`}>
+                  {c.strength} correlation
                 </span>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Attribution */}
-      {product.attributions?.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold mb-3">Value Attribution</h2>
-          <div className="border border-gray-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left p-3 font-medium">Contributor</th>
-                  <th className="text-left p-3 font-medium">Contribution</th>
-                  <th className="text-right p-3 font-medium">Payout</th>
-                </tr>
-              </thead>
-              <tbody>
-                {product.attributions.map((a, i) => (
-                  <tr key={i} className="border-t border-gray-100">
-                    <td className="p-3 text-gray-600">
-                      {a.contributor_id.slice(0, 12)}...
-                    </td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-emerald-500 rounded-full"
-                            style={{
-                              width: `${a.marginal_contribution * 100}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-xs text-gray-400">
-                          {Math.round(a.marginal_contribution * 100)}%
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-1">{a.reason}</p>
-                    </td>
-                    <td className="p-3 text-right font-medium text-emerald-600">
-                      ${a.payout_usd.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Value attribution */}
+      <section className="mb-10">
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Value Attribution</p>
+
+        {/* Revenue flow */}
+        <div className="border border-gray-100 rounded-xl p-5 mb-4 bg-gray-50/40">
+          <div className="flex items-center justify-between mb-5 flex-wrap gap-4">
+            <div className="text-center">
+              <p className="text-2xl font-black text-gray-900">${totalPrice}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Buyer pays</p>
+            </div>
+            <div className="text-gray-200 text-xl">→</div>
+            <div className="text-center">
+              <p className="text-xl font-bold text-gray-400">${platformFee}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Platform (20%)</p>
+            </div>
+            <div className="text-gray-200 text-xl">→</div>
+            <div className="text-center">
+              <p className="text-2xl font-black text-emerald-600">${totalPayout.toFixed(0)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">To contributors</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {product.attributions.map((a) => {
+              const info = CONTRIBUTOR_INFO[a.contributor_id] ?? {
+                name: a.contributor_id.slice(0, 15),
+                icon: "👤",
+              };
+              return (
+                <div key={a.contributor_id} className="bg-white border border-gray-100 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{info.icon}</span>
+                      <span className="text-sm font-semibold text-gray-900">{info.name}</span>
+                    </div>
+                    <span className="font-bold text-emerald-600">${a.payout_usd.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-400 rounded-full"
+                        style={{ width: `${a.marginal_contribution * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 w-8 text-right font-medium">
+                      {Math.round(a.marginal_contribution * 100)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">{a.reason}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Purchase */}
+      {!purchased ? (
+        <div className="border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-xs text-gray-400">Total</p>
+              <p className="text-2xl font-black text-gray-900">${totalPrice}</p>
+            </div>
+            <div className="text-right text-xs text-gray-400">
+              <p>${platformFee} platform (20%)</p>
+              <p className="text-emerald-600 font-medium">${totalPayout.toFixed(0)} to contributors</p>
+            </div>
+          </div>
+
+          {completing ? (
+            <div className="py-4 text-center">
+              <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-sm text-gray-500">Triggering PayPal payouts to contributors...</p>
+            </div>
+          ) : purchaseOrderId ? (
+            <>
+              <PayPalBuyButton orderId={purchaseOrderId} onApproved={handlePaymentApproved} />
+              <p className="text-xs text-gray-400 text-center mt-2">Sandbox mode — use a PayPal sandbox buyer account</p>
+            </>
+          ) : (
+            <button
+              onClick={handleShowPayPal}
+              disabled={preparingOrder}
+              className="w-full py-3 bg-gray-900 text-white rounded-xl text-sm font-semibold hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            >
+              {preparingOrder ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Creating PayPal order...
+                </span>
+              ) : `Purchase for $${totalPrice} via PayPal`}
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="border border-emerald-200 bg-emerald-50 rounded-xl p-6 text-center animate-scaleIn">
+          <div className="w-10 h-10 bg-emerald-500 text-white rounded-full flex items-center justify-center text-lg mx-auto mb-3">✓</div>
+          <p className="font-bold text-emerald-800 text-lg mb-1">Purchase Complete</p>
+          <p className="text-sm text-emerald-600 mb-5">PayPal has distributed earnings to all contributors.</p>
+          <div className="flex justify-center gap-6">
+            {product.attributions.map((a) => {
+              const info = CONTRIBUTOR_INFO[a.contributor_id] ?? { name: "Contributor", icon: "👤" };
+              return (
+                <div key={a.contributor_id} className="text-center">
+                  <div className="text-2xl mb-1">{info.icon}</div>
+                  <p className="text-xs text-gray-500">{info.name}</p>
+                  <p className="font-bold text-emerald-600 text-sm">${a.payout_usd.toFixed(2)}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
-
-      {/* Purchase button */}
-      {!purchased ? (
-        <button
-          onClick={handlePurchase}
-          disabled={purchasing}
-          className="w-full py-3 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {purchasing ? "Processing payment..." : "Purchase & Pay Contributors"}
-        </button>
-      ) : (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
-          <p className="text-emerald-800 font-medium">Purchase Complete</p>
-          <p className="text-emerald-600 text-sm">
-            Contributors have been paid via PayPal.
-          </p>
-        </div>
-      )}
     </main>
+  );
+}
+
+function Badge({ label, color }: { label: string; color: string }) {
+  const styles: Record<string, string> = {
+    blue: "bg-blue-50 text-blue-700 border-blue-100",
+    violet: "bg-violet-50 text-violet-700 border-violet-100",
+    emerald: "bg-emerald-50 text-emerald-700 border-emerald-100",
+  };
+  return (
+    <span className={`text-xs px-3 py-1 rounded-full border font-medium ${styles[color]}`}>
+      {label}
+    </span>
   );
 }
